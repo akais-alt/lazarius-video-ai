@@ -41,6 +41,8 @@ export default function Home() {
     finally { setLoading(false); }
   }
 
+  const mediaPath = job?.result?.render?.media_url as string | undefined;
+  const mediaUrl = mediaPath ? `${API.replace(/\/api$/, "")}${mediaPath}` : undefined;
   const stageLabels: Record<string, string> = { planning: "Scénario et scènes", video_cloud: "Génération vidéo Cloud", voice: "Voix IA", music: "Musique", subtitles: "Sous-titres", editing: "Montage", export: "Export MP4", done: "Terminé" };
 
   return <main className="page">
@@ -57,6 +59,10 @@ export default function Home() {
       {runtime && <div className="runtime">Recommandation : <b>{runtime.recommendation}</b> · GPU : {runtime.gpu} · RAM : {runtime.ram_gb || "?"} Go</div>}
       {error && <p className="error">{error}</p>}
     </section>
-    {job && <section className="result"><h2>Production</h2><p><b>{stageLabels[job.message ?? ""] ?? job.status}</b> · {job.message}</p><div className="progress"><div style={{width: `${job.progress ?? 0}%`}} /></div><p>{job.progress ?? 0}%</p>{job.status === "completed" && <div className="success">Pipeline terminée. Le moteur cloud peut maintenant fournir les médias et le rendu MP4 via son adaptateur configuré.</div>}<pre>{JSON.stringify(job.result ?? job, null, 2)}</pre></section>}
+    {job && <section className="result"><h2>Production</h2><p><b>{stageLabels[job.message ?? ""] ?? job.status}</b> · {job.message}</p><div className="progress"><div style={{width: `${job.progress ?? 0}%`}} /></div><p>{job.progress ?? 0}%</p>
+      {job.status === "completed" && mediaUrl && <div className="video-result"><video src={mediaUrl} controls playsInline /><a href={mediaUrl} target="_blank" rel="noreferrer">Ouvrir / récupérer le MP4</a></div>}
+      {job.status === "completed" && !mediaUrl && <div className="success">Production terminée, mais le serveur cloud n'a pas retourné d'URL vidéo exploitable.</div>}
+      <pre>{JSON.stringify(job.result ?? job, null, 2)}</pre>
+    </section>}
   </main>;
 }
