@@ -59,19 +59,17 @@ class CloudVideoService:
         engine = payload.get("character_engine", "auto")
         if engine == "auto":
             engine = "wan_animate" if payload.get("motion_video_url") else ("i2v_5b" if payload.get("image_url") else "t2v")
+
         is_animate = engine == "wan_animate"
         is_i2v = bool(payload.get("image_url"))
-        if is_animate:
-            workflow_path = self.animate_workflow_path
-        else:
-            workflow_path = self.i2v_workflow_path if is_i2v else self.workflow_path
+        workflow_path = self.animate_workflow_path if is_animate else (self.i2v_workflow_path if is_i2v else self.workflow_path)
 
         workflow = copy.deepcopy(self._load_json(workflow_path) or {})
         if not workflow:
             raise RuntimeError(f"Workflow introuvable ou vide: {workflow_path}")
 
         width, height = self._dimensions(payload.get("aspect_ratio", "9:16"), payload.get("quality", "720p"))
-        fps = 24
+        fps = 16 if is_animate else 24
         frames = max(17, min(121, ((max(1, int(payload.get("duration", 5))) * fps - 1) // 4) * 4 + 1))
         seed = random.randint(0, 2**63 - 1)
         replacements = {
