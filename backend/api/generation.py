@@ -17,6 +17,7 @@ class GenerateRequest(BaseModel):
     language: str = Field(default="fr")
     style: str = Field(default="cinematic")
     mode: str = Field(default="auto", pattern="^(auto|local|cloud)$")
+    quality: str = Field(default="720p", pattern="^(480p|720p|1080p)$")
 
 @router.get("/runtime")
 def runtime_info():
@@ -24,27 +25,26 @@ def runtime_info():
 
 @router.post("/plan")
 async def generate_plan(data: GenerateRequest):
-    return await pipeline.plan(**data.model_dump(exclude={"mode"}))
+    return await pipeline.plan(**data.model_dump(exclude={"mode", "quality"}))
 
 @router.post("/video")
 async def generate_video(data: GenerateRequest, background_tasks: BackgroundTasks):
     payload = data.model_dump()
     requested_mode = payload.pop("mode")
     selected_mode = runtime.detect().mode if requested_mode == "auto" else requested_mode
+    if selected_mode == "local_low_vram":
+        selected_mode = "local"
     job = jobs.create("video", {**payload, "mode": selected_mode})
     if selected_mode == "cloud":
-        background_tasks.add_task(_run_cloud, job["id"], payload)
+        background_tasks.add_task(_run_full_pipeline, job["id"], payload, selected_mode)
     else:
         background_tasks.add_task(_run_local_placeholder, job["id"], payload)
-    return {"job_id": job["id"], "mode": selected_mode, "status": job["status"], "message": "Génération lancée"}
+    return {"job_id": job["id"], "mode": selected_mode, "status": job["status"], "message": "Pipeline vidéo lancée"}
 
-async def _run_cloud(job_id: str, payload: dict):
-    jobs.update(job_id, status="running", progress=15, message="Préparation du scénario")
+async def _run_full_pipeline(job_id: str, payload: dict, mode: str):
     try:
-        plan = await pipeline.plan(**payload)
-        jobs.update(job_id, progress=45, message="Envoi au moteur cloud")
-        result = await cloud.submit({"project": payload, "plan": plan})
-        jobs.update(job_id, status="completed" if result.get("status") != "not_configured" else "waiting_config", progress=100, message=result.get("message", "Job cloud créé"), result={"plan": plan, "cloud": result})
+        result = await pipeline.execute(**payload, mode=mode, progress=lambda p, stage: jobs.update(job_id, status="running", progress=p, message=stage))
+        jobs.update(job_id, status="completed", progress=100, message="Pipeline préparée", result=result)
     except Exception as exc:
         jobs.update(job_id, status="failed", progress=100, message=str(exc), error=str(exc))
 
@@ -52,7 +52,7 @@ async def _run_local_placeholder(job_id: str, payload: dict):
     jobs.update(job_id, status="running", progress=20, message="Mode local sélectionné")
     try:
         plan = await pipeline.plan(**payload)
-        jobs.update(job_id, status="completed", progress=100, message="Plan prêt. Un moteur vidéo local GPU doit être configuré pour le rendu.", result={"plan": plan, "render": "not_configured"})
+        jobs.update(job_id, status="completed", progress=100, message="Plan prêt. Configure un moteur vidéo local GPU pour le rendu.", result={"plan": plan, "render": "not_configured"})
     except Exception as exc:
         jobs.update(job_id, status="failed", progress=100, message=str(exc), error=str(exc))
 
