@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -23,6 +24,8 @@ class MediaPipeline:
         self.ffmpeg = FFmpegService()
         self.storage = Path(os.getenv("STORAGE_DIR", "./storage"))
         self.storage.mkdir(parents=True, exist_ok=True)
+        self.ffmpeg_bin = os.getenv("FFMPEG_BIN", "ffmpeg")
+        self.public_base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
     async def _download(self, url: str, target: Path) -> Path:
         async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
@@ -33,6 +36,19 @@ class MediaPipeline:
                         file.write(chunk)
         return target
 
+    def _extract_last_frame(self, clip_path: Path) -> Path:
+        frame_path = self.storage / f"last_frame_{uuid.uuid4().hex}.jpg"
+        command = [self.ffmpeg_bin, "-y", "-sseof", "-0.1", "-i", str(clip_path), "-frames:v", "1", "-q:v", "2", str(frame_path)]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0 or not frame_path.exists():
+            raise RuntimeError(f"Impossible d'extraire la dernière image: {result.stderr[-500:]}")
+        return frame_path
+
+    def _public_media_url(self, path: Path) -> str:
+        if not self.public_base_url:
+            raise RuntimeError("PUBLIC_BASE_URL est requis pour le chaînage des scènes en mode cloud.")
+        return f"{self.public_base_url}/api/media/{path.name}"
+
     async def run(self, plan: dict, payload: dict, progress: Callable[[int, str], None]):
         scenes = plan.get("storyboard", [])
         if not scenes:
@@ -41,26 +57,34 @@ class MediaPipeline:
         progress(10, "script")
         clips = []
         local_clip_paths: list[Path] = []
-        image_url = payload.get("image_url")
+        current_image_url = payload.get("image_url")
+        chain_scenes = bool(payload.get("chain_scenes"))
+
+        if chain_scenes and len(scenes) > 1 and not self.public_base_url:
+            raise RuntimeError("Le chaînage des scènes nécessite PUBLIC_BASE_URL pour rendre les dernières images accessibles au moteur cloud.")
 
         for index, scene in enumerate(scenes):
             progress(20 + int(index * 35 / max(len(scenes), 1)), "video_cloud")
             visual_prompt = scene.get("visual_prompt") or scene.get("description") or "cinematic scene"
             cloud_job = await self.cloud.submit({
-                "type": "image_to_video" if image_url else "video_clip",
+                "type": "image_to_video" if current_image_url else "video_clip",
                 "request_id": str(uuid.uuid4()),
                 "prompt": visual_prompt,
-                "image_url": image_url,
+                "image_url": current_image_url,
                 "duration": scene.get("duration", 4),
                 "aspect_ratio": payload.get("aspect_ratio", "9:16"),
                 "quality": payload.get("quality", "720p"),
             })
-            record = {"scene": index + 1, "cloud": cloud_job}
+            record = {"scene": index + 1, "cloud": cloud_job, "input_image_url": current_image_url}
             if cloud_job.get("video_url"):
                 clip_path = self.storage / f"clip_{uuid.uuid4().hex}.mp4"
                 await self._download(cloud_job["video_url"], clip_path)
                 local_clip_paths.append(clip_path)
                 record["local_file"] = str(clip_path)
+                if chain_scenes and index < len(scenes) - 1:
+                    last_frame = self._extract_last_frame(clip_path)
+                    record["last_frame"] = str(last_frame)
+                    current_image_url = self._public_media_url(last_frame)
             clips.append(record)
 
         if not local_clip_paths:
@@ -101,7 +125,8 @@ class MediaPipeline:
         progress(100, "done")
         return {
             "status": "completed",
-            "type": "image_to_video" if image_url else "text_to_video",
+            "type": "image_to_video" if payload.get("image_url") else "text_to_video",
+            "chain_scenes": chain_scenes,
             "stages": ["prompt", "script", "scenes", "video_cloud", "voice", "subtitles", "editing", "mp4"],
             "clips": clips,
             "voice": voice,
