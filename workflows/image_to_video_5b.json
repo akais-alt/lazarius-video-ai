@@ -1,0 +1,112 @@
+{
+  "37": {
+    "inputs": {
+      "unet_name": "wan2.2_ti2v_5B_fp16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {"title": "Load Wan 2.2 TI2V-5B"}
+  },
+  "38": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {"title": "Load Wan Text Encoder"}
+  },
+  "39": {
+    "inputs": {
+      "vae_name": "wan2.2_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {"title": "Load Wan 2.2 VAE"}
+  },
+  "56": {
+    "inputs": {
+      "image": "__IMAGE_URL__",
+      "upload": "image"
+    },
+    "class_type": "LoadImage",
+    "_meta": {"title": "Load Start Image"}
+  },
+  "6": {
+    "inputs": {
+      "text": "__PROMPT__",
+      "clip": ["38", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Positive Prompt"}
+  },
+  "7": {
+    "inputs": {
+      "text": "static, blurry, low quality, distorted, text, watermark, deformed anatomy, extra fingers, bad hands, bad face, duplicated people, frozen motion, noisy background",
+      "clip": ["38", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "55": {
+    "inputs": {
+      "width": "__WIDTH__",
+      "height": "__HEIGHT__",
+      "length": "__FRAMES__",
+      "batch_size": 1,
+      "vae": ["39", 0],
+      "start_image": ["56", 0]
+    },
+    "class_type": "Wan22ImageToVideoLatent",
+    "_meta": {"title": "Wan 2.2 Image To Video Latent"}
+  },
+  "48": {
+    "inputs": {
+      "shift": 8,
+      "model": ["37", 0]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {"title": "Model Sampling SD3"}
+  },
+  "3": {
+    "inputs": {
+      "seed": "__RANDOM_INT__",
+      "steps": 20,
+      "cfg": 5,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "model": ["48", 0],
+      "latent_image": ["55", 0],
+      "denoise": 1
+    },
+    "class_type": "KSampler",
+    "_meta": {"title": "KSampler"}
+  },
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["39", 0]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {"title": "VAE Decode"}
+  },
+  "57": {
+    "inputs": {
+      "images": ["8", 0],
+      "fps": 24
+    },
+    "class_type": "CreateVideo",
+    "_meta": {"title": "Create Video"}
+  },
+  "58": {
+    "inputs": {
+      "video": ["57", 0],
+      "filename_prefix": "lazarius/i2v",
+      "format": "auto",
+      "codec": "auto"
+    },
+    "class_type": "SaveVideo",
+    "_meta": {"title": "Save Video"}
+  }
+}
