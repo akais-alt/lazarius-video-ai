@@ -1,0 +1,11 @@
+{
+  "_lazarius": {
+    "engine": "wan2_2_animate_14b",
+    "source": "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_14B_animate.json",
+    "required_inputs": ["__IMAGE_URL__", "__MOTION_VIDEO_URL__", "__PROMPT__"],
+    "note": "Official ComfyUI workflow is maintained upstream. Replace this adapter with the exact API-format exported workflow from the installed ComfyUI version before production execution."
+  },
+  "nodes": [],
+  "links": [],
+  "version": 1
+}
