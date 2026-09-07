@@ -9,6 +9,7 @@ class RuntimeProfile:
     cpu_count: int
     ram_gb: float
     gpu: str
+    vram_gb: float | None
     ffmpeg: bool
     recommendation: str
 
@@ -22,23 +23,37 @@ class RuntimeService:
         except Exception:
             pass
         gpu = "unknown"
+        vram_gb = None
         try:
             import torch
             if torch.cuda.is_available():
                 gpu = torch.cuda.get_device_name(0)
+                vram_gb = round(torch.cuda.get_device_properties(0).total_memory / (1024 ** 3), 1)
             else:
                 gpu = "none"
         except Exception:
             gpu = "not-installed"
         configured = os.getenv("RUNTIME_MODE", "auto").lower()
-        if configured in {"cloud", "local", "auto"}:
-            mode = configured
+        if configured not in {"cloud", "local", "auto"}:
+            configured = "auto"
+        if configured == "cloud":
+            mode = "cloud"
+        elif configured == "local":
+            mode = "local"
+        elif vram_gb is not None and vram_gb >= 12:
+            mode = "local"
+        elif vram_gb is not None and vram_gb >= 6 and ram_gb >= 16:
+            mode = "local_low_vram"
         else:
-            mode = "auto"
-        if mode == "auto":
-            mode = "local" if gpu not in {"none", "unknown", "not-installed"} else "cloud"
-        recommendation = "local GPU available" if mode == "local" else "cloud generation recommended"
-        return RuntimeProfile(mode, cpu_count, ram_gb, gpu, shutil.which("ffmpeg") is not None, recommendation)
+            mode = "cloud"
+        recommendation = {
+            "local": "GPU local suffisante pour le rendu vidéo.",
+            "local_low_vram": "GPU utilisable en mode économie de VRAM.",
+            "cloud": "PC léger détecté : génération vidéo Cloud recommandée.",
+        }[mode]
+        return RuntimeProfile(mode, cpu_count, ram_gb, gpu, vram_gb, shutil.which("ffmpeg") is not None, recommendation)
 
     def as_dict(self):
-        return asdict(self.detect())
+        profile = asdict(self.detect())
+        profile["os"] = platform.system()
+        return profile
