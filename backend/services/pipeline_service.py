@@ -32,7 +32,18 @@ class PipelineService:
             "visual_prompts": visual_prompts,
         }
 
-    async def execute(self, prompt: str, duration: int, aspect_ratio: str, language: str, style: str, mode: str = "cloud", quality: str = "720p", progress=None):
+    async def execute(
+        self,
+        prompt: str,
+        duration: int,
+        aspect_ratio: str,
+        language: str,
+        style: str,
+        mode: str = "cloud",
+        quality: str = "720p",
+        image_url: str | None = None,
+        progress=None,
+    ):
         progress = progress or (lambda _p, _s: None)
         plan = await self.plan(prompt, duration, aspect_ratio, language, style)
         progress(8, "planning")
@@ -44,4 +55,5 @@ class PipelineService:
             "style": style,
             "mode": mode,
             "quality": quality,
+            "image_url": image_url,
         }, progress)
