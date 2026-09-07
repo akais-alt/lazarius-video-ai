@@ -1,0 +1,5 @@
+{
+  "_comment": "Replace this starter workflow with an exported ComfyUI Wan 2.2 workflow. Keep the file valid JSON.",
+  "_provider": "ComfyUI/Wan2.2",
+  "_prompt": "cinematic scene"
+}
