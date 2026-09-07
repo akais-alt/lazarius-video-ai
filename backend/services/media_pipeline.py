@@ -59,7 +59,13 @@ class MediaPipeline:
         local_clip_paths: list[Path] = []
         current_image_url = payload.get("image_url")
         chain_scenes = bool(payload.get("chain_scenes"))
+        character_engine = payload.get("character_engine", "auto")
+        motion_video_url = payload.get("motion_video_url")
 
+        if character_engine == "auto":
+            character_engine = "wan_animate" if motion_video_url else ("i2v_5b" if current_image_url else "t2v")
+        if character_engine == "wan_animate" and (not current_image_url or not motion_video_url):
+            raise RuntimeError("Wan2.2 Animate exige une image de référence et une vidéo de mouvement.")
         if chain_scenes and len(scenes) > 1 and not self.public_base_url:
             raise RuntimeError("Le chaînage des scènes nécessite PUBLIC_BASE_URL pour rendre les dernières images accessibles au moteur cloud.")
 
@@ -67,15 +73,17 @@ class MediaPipeline:
             progress(20 + int(index * 35 / max(len(scenes), 1)), "video_cloud")
             visual_prompt = scene.get("visual_prompt") or scene.get("description") or "cinematic scene"
             cloud_job = await self.cloud.submit({
-                "type": "image_to_video" if current_image_url else "video_clip",
+                "type": character_engine,
                 "request_id": str(uuid.uuid4()),
                 "prompt": visual_prompt,
                 "image_url": current_image_url,
+                "motion_video_url": motion_video_url if character_engine == "wan_animate" else None,
+                "character_engine": character_engine,
                 "duration": scene.get("duration", 4),
                 "aspect_ratio": payload.get("aspect_ratio", "9:16"),
                 "quality": payload.get("quality", "720p"),
             })
-            record = {"scene": index + 1, "cloud": cloud_job, "input_image_url": current_image_url}
+            record = {"scene": index + 1, "cloud": cloud_job, "input_image_url": current_image_url, "character_engine": character_engine}
             if cloud_job.get("video_url"):
                 clip_path = self.storage / f"clip_{uuid.uuid4().hex}.mp4"
                 await self._download(cloud_job["video_url"], clip_path)
@@ -88,48 +96,30 @@ class MediaPipeline:
             clips.append(record)
 
         if not local_clip_paths:
-            return {
-                "status": "waiting_config",
-                "stages": ["prompt", "script", "scenes", "video_cloud"],
-                "clips": clips,
-                "message": "Le moteur cloud n'a retourné aucune vidéo exploitable.",
-            }
+            return {"status": "waiting_config", "stages": ["prompt", "script", "scenes", "video_cloud"], "clips": clips, "message": "Le moteur cloud n'a retourné aucune vidéo exploitable."}
 
         progress(60, "voice")
         script_text = plan.get("script", "")
         voice_path = self.storage / f"voice_{uuid.uuid4().hex}.wav"
         voice = self.tts.synthesize(str(script_text), voice_path)
-        if voice.get("status") != "completed":
-            voice_path = None
+        if voice.get("status") != "completed": voice_path = None
 
         progress(72, "subtitles")
         subtitle_path = None
         if voice_path:
             candidate = self.storage / f"subtitles_{uuid.uuid4().hex}.srt"
             subtitle = self.subtitles.generate_srt(voice_path, candidate, payload.get("language", "fr"))
-            if subtitle.get("status") == "completed":
-                subtitle_path = candidate
+            if subtitle.get("status") == "completed": subtitle_path = candidate
 
         progress(84, "editing")
         assembled = self.storage / f"assembled_{uuid.uuid4().hex}.mp4"
         concat = self.ffmpeg.concat_videos(local_clip_paths, assembled)
-        if concat.get("status") != "completed":
-            raise RuntimeError(concat.get("error", "Erreur FFmpeg pendant l'assemblage"))
+        if concat.get("status") != "completed": raise RuntimeError(concat.get("error", "Erreur FFmpeg pendant l'assemblage"))
 
         progress(94, "export")
         final_path = self.storage / f"lazarius_{uuid.uuid4().hex}.mp4"
         render = self.ffmpeg.mux_audio(assembled, voice_path, None, subtitle_path, final_path)
-        if render.get("status") != "completed":
-            raise RuntimeError(render.get("error", "Erreur FFmpeg pendant le rendu final"))
+        if render.get("status") != "completed": raise RuntimeError(render.get("error", "Erreur FFmpeg pendant le rendu final"))
 
         progress(100, "done")
-        return {
-            "status": "completed",
-            "type": "image_to_video" if payload.get("image_url") else "text_to_video",
-            "chain_scenes": chain_scenes,
-            "stages": ["prompt", "script", "scenes", "video_cloud", "voice", "subtitles", "editing", "mp4"],
-            "clips": clips,
-            "voice": voice,
-            "subtitles": {"status": "completed" if subtitle_path else "not_configured", "path": str(subtitle_path) if subtitle_path else None},
-            "render": {"status": "completed", "engine": "ffmpeg", "filename": final_path.name, "media_url": f"/api/media/{final_path.name}"},
-        }
+        return {"status": "completed", "type": character_engine, "character_engine": character_engine, "chain_scenes": chain_scenes, "stages": ["prompt", "script", "scenes", "video_cloud", "voice", "subtitles", "editing", "mp4"], "clips": clips, "voice": voice, "subtitles": {"status": "completed" if subtitle_path else "not_configured", "path": str(subtitle_path) if subtitle_path else None}, "render": {"status": "completed", "engine": "ffmpeg", "filename": final_path.name, "media_url": f"/api/media/{final_path.name}"}}
