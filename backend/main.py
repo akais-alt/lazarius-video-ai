@@ -4,7 +4,7 @@ from api.health import router as health_router
 from api.projects import router as projects_router
 from api.generation import router as generation_router
 
-app = FastAPI(title="Lazarius Video AI", version="0.2.0")
+app = FastAPI(title="Lazarius Video AI", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,4 +20,4 @@ app.include_router(generation_router, prefix="/api")
 
 @app.get("/")
 def root():
-    return {"name": "Lazarius Video AI", "status": "running", "version": "0.2.0"}
+    return {"name": "Lazarius Video AI", "status": "running", "version": "0.3.0", "architecture": "low-pc-cloud-first"}
