@@ -20,27 +20,45 @@ class FFmpegService:
             subprocess.run(command, check=True, capture_output=True, text=True)
         except (OSError, subprocess.CalledProcessError) as exc:
             return {"status": "failed", "error": str(exc)}
+        finally:
+            list_file.unlink(missing_ok=True)
         return {"status": "completed", "path": str(output_path)}
 
     def mux_audio(self, video_path: Path, voice_path: Path | None, music_path: Path | None, subtitle_path: Path | None, output_path: Path) -> dict:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        inputs = ["-i", str(video_path)]
+        input_paths: list[Path] = [video_path]
         if voice_path:
-            inputs += ["-i", str(voice_path)]
+            input_paths.append(voice_path)
         if music_path:
-            inputs += ["-i", str(music_path)]
-        command = [self.binary, "-y", *inputs]
-        maps = ["-map", "0:v:0"]
-        audio_count = int(bool(voice_path)) + int(bool(music_path))
-        if audio_count:
-            if voice_path and music_path:
-                command += ["-filter_complex", "[1:a][2:a]amix=inputs=2:duration=first:dropout_transition=2[aout]", *maps, "-map", "[aout]"]
-            else:
-                command += [*maps, "-map", "1:a:0"]
+            input_paths.append(music_path)
+        if subtitle_path:
+            input_paths.append(subtitle_path)
+
+        command = [self.binary, "-y"]
+        for path in input_paths:
+            command += ["-i", str(path)]
+
+        command += ["-map", "0:v:0"]
+        audio_indexes = []
+        if voice_path:
+            audio_indexes.append(1)
+        if music_path:
+            audio_indexes.append(2 if voice_path else 1)
+
+        if len(audio_indexes) == 2:
+            command += ["-filter_complex", f"[{audio_indexes[0]}:a][{audio_indexes[1]}:a]amix=inputs=2:duration=first:dropout_transition=2[aout]", "-map", "[aout]"]
+        elif len(audio_indexes) == 1:
+            command += ["-map", f"{audio_indexes[0]}:a:0"]
+
+        if subtitle_path:
+            subtitle_index = len(input_paths) - 1
+            command += ["-map", f"{subtitle_index}:0", "-c:s", "mov_text"]
+
+        command += ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart"]
+        if audio_indexes:
             command += ["-shortest"]
-        else:
-            command += maps
-        command += ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(output_path)]
+        command += [str(output_path)]
+
         try:
             subprocess.run(command, check=True, capture_output=True, text=True)
         except (OSError, subprocess.CalledProcessError) as exc:
