@@ -44,7 +44,7 @@ CLOUD_VIDEO_API_URL=
 CLOUD_VIDEO_API_KEY=
 ```
 
-L'adaptateur cloud est volontairement neutre : il n'impose pas un fournisseur payant précis. Il pourra être relié à un serveur ComfyUI cloud/serverless ou à un autre backend compatible. ComfyUI dispose d'architectures locales, cloud et API, et des projets open source existent pour exécuter des workflows vidéo sur GPU cloud/serverless. citeturn0search2turn0search4turn0search7
+L'adaptateur cloud est volontairement neutre : il n'impose pas un fournisseur précis. Il pourra être relié à un serveur ComfyUI cloud/serverless ou à un autre backend compatible.
 
 ## API
 
