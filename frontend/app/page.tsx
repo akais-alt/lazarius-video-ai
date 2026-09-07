@@ -12,6 +12,8 @@ export default function Home() {
   const [duration, setDuration] = useState(30);
   const [quality, setQuality] = useState("720p");
   const [mode, setMode] = useState("auto");
+  const [chainScenes, setChainScenes] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [runtime, setRuntime] = useState<any>(null);
@@ -31,6 +33,21 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [jobId, job?.status]);
 
+  async function uploadImage(file: File) {
+    setUploading(true); setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API}/generate/media/upload`, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `Upload impossible (${res.status})`);
+      const absolute = data.url.startsWith("http") ? data.url : `${API.replace(/\/api$/, "")}${data.url}`;
+      setImageUrl(absolute);
+      if (!data.public) setError("Image importée. Pour le Cloud/Vast, configure PUBLIC_BASE_URL afin que le moteur puisse la récupérer.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Erreur d'upload"); }
+    finally { setUploading(false); }
+  }
+
   async function generate() {
     if (!prompt.trim()) return;
     setLoading(true); setError(""); setJob(null);
@@ -43,6 +60,7 @@ export default function Home() {
         style: "cinematic",
         mode: imageUrl.trim() ? "cloud" : mode,
         quality,
+        chain_scenes: chainScenes,
         ...(imageUrl.trim() ? { image_url: imageUrl.trim() } : {}),
       };
       const res = await fetch(`${API}/generate/video`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -57,18 +75,23 @@ export default function Home() {
   const stageLabels: Record<string, string> = { planning: "Scénario et scènes", video_cloud: "Génération vidéo Cloud", voice: "Voix IA", music: "Musique", subtitles: "Sous-titres", editing: "Montage", export: "Export MP4", done: "Terminé" };
 
   return <main className="page">
-    <section className="hero"><div className="badge">● LOW-PC · CLOUD-FIRST · OPEN SOURCE</div><h1>Lazarius <span>Video AI</span></h1><p>Décris une idée. Ajoute une image si tu veux l'animer. Lazarius orchestre scénario → vidéo → voix → sous-titres → montage → MP4.</p></section>
+    <section className="hero"><div className="badge">● LOW-PC · CLOUD-FIRST · OPEN SOURCE</div><h1>Lazarius <span>Video AI</span></h1><p>Décris une idée. Ajoute une image si tu veux l’animer. Lazarius orchestre scénario → vidéo → voix → sous-titres → montage → MP4.</p></section>
     <section className="card">
       <label>Ton idée</label><textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ex. Une publicité cinématique pour une entreprise de construction en Côte d’Ivoire..." />
       <label>Image de départ — optionnel</label>
-      <input value={imageUrl} onChange={e => setImageUrl(e.target.value)} placeholder="https://exemple.com/mon-image.jpg" type="url" />
-      {imageUrl.trim() && <p className="runtime">Mode image → vidéo activé : le moteur Cloud téléchargera cette image avant le rendu.</p>}
+      <div className="controls">
+        <input value={imageUrl} onChange={e => setImageUrl(e.target.value)} placeholder="https://exemple.com/mon-image.jpg" type="url" />
+        <label className="upload-label"><input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={e => e.target.files?.[0] && uploadImage(e.target.files[0])} />{uploading ? "Import..." : "Importer une image"}</label>
+      </div>
+      {imageUrl.trim() && <p className="runtime">Mode image → vidéo activé : le moteur Cloud utilisera cette image comme première image.</p>}
+      <label className="check"><input type="checkbox" checked={chainScenes} onChange={e => setChainScenes(e.target.checked)} /> Chaîner les scènes : dernière image d’une scène → première image de la suivante</label>
+      {chainScenes && <p className="runtime">Le chaînage nécessite PUBLIC_BASE_URL en mode Cloud pour rendre les images intermédiaires accessibles au moteur.</p>}
       <div className="controls">
         <div><label>Format</label><select value={format} onChange={e => setFormat(e.target.value)}><option>9:16</option><option>16:9</option><option>1:1</option></select></div>
         <div><label>Durée</label><select value={duration} onChange={e => setDuration(Number(e.target.value))}><option value={15}>15 s</option><option value={30}>30 s</option><option value={60}>60 s</option><option value={120}>2 min</option></select></div>
         <div><label>Qualité</label><select value={quality} onChange={e => setQuality(e.target.value)}><option>480p</option><option>720p</option><option>1080p</option></select></div>
         <div><label>Moteur</label><select value={mode} onChange={e => setMode(e.target.value)} disabled={Boolean(imageUrl.trim())}><option value="auto">Automatique</option><option value="cloud">Cloud</option><option value="local">Local GPU</option></select></div>
-        <button onClick={generate} disabled={loading || !prompt.trim()}>{loading ? "Lancement..." : imageUrl.trim() ? "Animer l’image →" : "Créer la vidéo →"}</button>
+        <button onClick={generate} disabled={loading || !prompt.trim() || uploading}>{loading ? "Lancement..." : imageUrl.trim() ? "Animer l’image →" : "Créer la vidéo →"}</button>
       </div>
       {runtime && <div className="runtime">Recommandation : <b>{runtime.recommendation}</b> · GPU : {runtime.gpu} · RAM : {runtime.ram_gb || "?"} Go</div>}
       {error && <p className="error">{error}</p>}
