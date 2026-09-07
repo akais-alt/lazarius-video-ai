@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, HttpUrl
@@ -27,6 +27,7 @@ class GenerateRequest(BaseModel):
     mode: str = Field(default="auto", pattern="^(auto|local|cloud)$")
     quality: str = Field(default="720p", pattern="^(480p|720p|1080p)$")
     image_url: HttpUrl | None = None
+    character_description: str | None = Field(default=None, max_length=1000)
     chain_scenes: bool = False
 
 
@@ -62,9 +63,10 @@ async def generate_video(data: GenerateRequest, background_tasks: BackgroundTask
     selected_mode = runtime.detect().mode if requested_mode == "auto" else requested_mode
     if selected_mode == "local_low_vram":
         selected_mode = "local"
-
     if payload.get("image_url") and selected_mode == "local":
         selected_mode = "cloud"
+    if payload.get("chain_scenes") and selected_mode != "cloud":
+        raise HTTPException(status_code=400, detail="Le chaînage des scènes est actuellement disponible en mode cloud.")
 
     job = jobs.create("video", {**payload, "mode": selected_mode})
     if selected_mode == "cloud":
@@ -78,27 +80,16 @@ async def generate_video(data: GenerateRequest, background_tasks: BackgroundTask
         "status": job["status"],
         "type": "image_to_video" if payload.get("image_url") else "text_to_video",
         "chain_scenes": payload.get("chain_scenes", False),
+        "character_consistency": bool(payload.get("character_description") or payload.get("image_url")),
         "message": "Pipeline vidéo lancée",
     }
 
 
 async def _run_full_pipeline(job_id: str, payload: dict, mode: str):
     try:
-        result = await pipeline.execute(
-            **payload,
-            mode=mode,
-            progress=lambda p, stage: jobs.update(
-                job_id, status="running", progress=p, message=stage
-            ),
-        )
+        result = await pipeline.execute(**payload, mode=mode, progress=lambda p, stage: jobs.update(job_id, status="running", progress=p, message=stage))
         final_status = "completed" if result.get("status") == "completed" else "waiting_config"
-        jobs.update(
-            job_id,
-            status=final_status,
-            progress=100,
-            message=result.get("message", "Pipeline préparée"),
-            result=result,
-        )
+        jobs.update(job_id, status=final_status, progress=100, message=result.get("message", "Pipeline préparée"), result=result)
     except Exception as exc:
         jobs.update(job_id, status="failed", progress=100, message=str(exc), error=str(exc))
 
@@ -108,13 +99,7 @@ async def _run_local_placeholder(job_id: str, payload: dict):
     try:
         plan_payload = {key: payload[key] for key in ("prompt", "duration", "aspect_ratio", "language", "style")}
         plan = await pipeline.plan(**plan_payload)
-        jobs.update(
-            job_id,
-            status="waiting_config",
-            progress=100,
-            message="Plan prêt. Configure un moteur vidéo local GPU pour le rendu.",
-            result={"plan": plan, "render": "not_configured"},
-        )
+        jobs.update(job_id, status="waiting_config", progress=100, message="Plan prêt. Configure un moteur vidéo local GPU pour le rendu.", result={"plan": plan, "render": "not_configured"})
     except Exception as exc:
         jobs.update(job_id, status="failed", progress=100, message=str(exc), error=str(exc))
 
