@@ -55,6 +55,8 @@ Wan 2.2 propose un modèle 5B capable de texte→vidéo et image→vidéo. Le wo
 - Wan 2.2 T2V cloud
 - Wan 2.2 TI2V-5B image→vidéo
 - image de départ via URL publique
+- import d'image depuis le navigateur (JPG/PNG/WebP, limite configurable)
+- option first-image → last-frame → scène suivante
 - workflow ComfyUI paramétrable
 - seed aléatoire par génération
 - adaptateur cloud `/generate/sync`
@@ -69,9 +71,11 @@ Wan 2.2 propose un modèle 5B capable de texte→vidéo et image→vidéo. Le wo
 - aucun modèle vidéo lourd obligatoire sur le PC
 - état `waiting_config` lorsque le moteur n'est pas configuré
 
-## Image → vidéo
+## Image → vidéo et chaînage des scènes
 
-L'interface accepte maintenant une URL d'image de départ. Lorsqu'une image est fournie, Lazarius force le rendu Cloud et sélectionne automatiquement `workflows/image_to_video_5b.json`.
+L'interface accepte une URL d'image ou un fichier image. Lorsqu'une image est fournie, Lazarius force le rendu Cloud et sélectionne automatiquement `workflows/image_to_video_5b.json`.
+
+Le mode « Chaîner les scènes » génère la première scène, extrait sa dernière image avec FFmpeg, puis utilise cette image comme image de départ de la scène suivante. Pour un moteur cloud, les images intermédiaires doivent être accessibles publiquement via `PUBLIC_BASE_URL`.
 
 Pour Vast.ai Serverless, le wrapper ComfyUI peut détecter une URL utilisée comme image d'entrée dans le workflow, télécharger cette image sur le worker, puis exécuter le workflow. citeturn2search0
 
@@ -94,7 +98,11 @@ CLOUD_VIDEO_API_URL=https://TON_ENDPOINT
 CLOUD_VIDEO_API_KEY=
 CLOUD_VIDEO_WORKFLOW=workflows/text_to_video.json
 CLOUD_VIDEO_I2V_WORKFLOW=workflows/image_to_video_5b.json
+PUBLIC_BASE_URL=https://ton-backend-public.example.com
+MAX_IMAGE_UPLOAD_MB=10
 ```
+
+`PUBLIC_BASE_URL` est nécessaire pour que Vast/ComfyUI puisse récupérer les images importées par le navigateur et les dernières images produites pendant le chaînage. Pour une image déjà hébergée publiquement, `image_url` peut continuer à être utilisé directement.
 
 Pour un serveur ComfyUI/Vast compatible, l'adaptateur utilise `/generate/sync`. Le serveur accepte un workflow ComfyUI complet et retourne notamment des URL présignées lorsque le stockage S3 est configuré. citeturn2search0
 
@@ -102,9 +110,10 @@ Pour un serveur ComfyUI/Vast compatible, l'adaptateur utilise `/generate/sync`. 
 
 - `GET /api/generate/runtime` — capacités détectées
 - `POST /api/generate/plan` — scénario/storyboard/prompts
-- `POST /api/generate/video` — créer un job T2V ou I2V
+- `POST /api/generate/media/upload` — importer une image JPG/PNG/WebP
+- `POST /api/generate/video` — créer un job T2V ou I2V, avec option `chain_scenes`
 - `GET /api/generate/jobs/{job_id}` — suivre le job
-- `GET /api/media/{filename}` — lire un MP4 généré
+- `GET /api/media/{filename}` — lire un média généré ou une image importée
 
 ## Installation
 
@@ -152,9 +161,9 @@ Les workflows utilisent notamment les placeholders `__PROMPT__`, `__IMAGE_URL__`
 10. musique de fond et ducking automatique
 11. ~~image-to-video~~
 12. ~~workflow Wan2.2 TI2V-5B Low-VRAM~~
-13. connecteurs cloud interchangeables
-14. first-frame / last-frame chaining
-15. upload direct d'images depuis le navigateur vers le stockage objet
+13. ~~connecteurs cloud interchangeables~~
+14. ~~first-frame / last-frame chaining~~
+15. ~~import d'images depuis le navigateur~~
 
 ## Licence
 
