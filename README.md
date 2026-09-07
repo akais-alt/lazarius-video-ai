@@ -5,8 +5,9 @@ Agent open source de génération vidéo IA conçu pour fonctionner même sur un
 ## Pipeline
 
 ```text
-Prompt → scénario → scènes → prompts visuels → vidéo Cloud/Local
-       → voix Piper → Whisper → sous-titres SRT → montage FFmpeg → MP4
+Prompt + image optionnelle → scénario → scènes → prompts visuels
+→ Wan 2.2 T2V / TI2V-5B I2V → clips → voix Piper → Whisper
+→ sous-titres SRT → montage FFmpeg → MP4
 ```
 
 ## Architecture Low-PC / Cloud-first
@@ -35,12 +36,12 @@ PC utilisateur
 - Backend : Python + FastAPI
 - Orchestration : agents spécialisés
 - Vidéo : ComfyUI + workflows vidéo open source
-- Modèle vidéo de référence : Wan 2.2
+- Modèle vidéo : Wan 2.2
 - Audio : Piper
 - Transcription : faster-whisper
 - Montage : FFmpeg
 
-Wan 2.2 est intégré nativement dans ComfyUI et propose des workflows officiels texte-vers-vidéo et image-vers-vidéo. La version TI2V-5B est annoncée comme adaptée à environ 8 Go de VRAM avec l'offloading natif ComfyUI ; la version 14B T2V est également disponible pour les rendus cloud plus lourds. citeturn0search0
+Wan 2.2 propose un modèle 5B capable de texte→vidéo et image→vidéo. Le workflow TI2V-5B officiel utilise `wan2.2_ti2v_5B_fp16.safetensors` et `wan2.2_vae.safetensors`. citeturn0search1turn0search2
 
 ## Fonctionnalités actuelles
 
@@ -51,7 +52,10 @@ Wan 2.2 est intégré nativement dans ComfyUI et propose des workflows officiels
 - jobs asynchrones avec progression
 - génération scénario + storyboard
 - prompts visuels attachés directement aux scènes
-- workflow ComfyUI/Wan 2.2 paramétrable
+- Wan 2.2 T2V cloud
+- Wan 2.2 TI2V-5B image→vidéo
+- image de départ via URL publique
+- workflow ComfyUI paramétrable
 - seed aléatoire par génération
 - adaptateur cloud `/generate/sync`
 - téléchargement automatique des clips retournés
@@ -65,11 +69,19 @@ Wan 2.2 est intégré nativement dans ComfyUI et propose des workflows officiels
 - aucun modèle vidéo lourd obligatoire sur le PC
 - état `waiting_config` lorsque le moteur n'est pas configuré
 
+## Image → vidéo
+
+L'interface accepte maintenant une URL d'image de départ. Lorsqu'une image est fournie, Lazarius force le rendu Cloud et sélectionne automatiquement `workflows/image_to_video_5b.json`.
+
+Pour Vast.ai Serverless, le wrapper ComfyUI peut détecter une URL utilisée comme image d'entrée dans le workflow, télécharger cette image sur le worker, puis exécuter le workflow. citeturn2search0
+
+Le workflow utilise le nœud natif `Wan22ImageToVideoLatent` et les paramètres largeur, hauteur et longueur de vidéo. citeturn0search2turn1search2
+
 ## Important sur le « gratuit »
 
 Le code et les modèles open source peuvent être utilisés sans licence logicielle payante, mais un GPU cloud reste une ressource informatique qui peut être facturée. Lazarius ne promet donc pas un quota cloud gratuit permanent.
 
-Pour rester réellement gratuit, il faut utiliser un GPU local disponible ou une plateforme qui offre actuellement un quota gratuit. Wan 2.2 est open source sous Apache 2.0, mais les besoins matériels restent importants pour un rendu confortable. citeturn0search0
+Pour rester réellement gratuit, il faut utiliser un GPU local disponible ou une plateforme qui offre actuellement un quota gratuit.
 
 ## Configuration cloud
 
@@ -78,18 +90,19 @@ Copier `.env.example` vers `.env` puis renseigner :
 ```env
 RUNTIME_MODE=auto
 CLOUD_VIDEO_PROVIDER=vast
-CLOUD_VIDEO_API_URL=https://TON_ENDPOINT/generate
+CLOUD_VIDEO_API_URL=https://TON_ENDPOINT
 CLOUD_VIDEO_API_KEY=
 CLOUD_VIDEO_WORKFLOW=workflows/text_to_video.json
+CLOUD_VIDEO_I2V_WORKFLOW=workflows/image_to_video_5b.json
 ```
 
-Pour un serveur ComfyUI/Vast compatible, l'adaptateur utilise `/generate/sync`. Si aucun endpoint cloud n'est configuré, Lazarius ne simule pas de vidéo et retourne `waiting_config`.
+Pour un serveur ComfyUI/Vast compatible, l'adaptateur utilise `/generate/sync`. Le serveur accepte un workflow ComfyUI complet et retourne notamment des URL présignées lorsque le stockage S3 est configuré. citeturn2search0
 
 ## API
 
 - `GET /api/generate/runtime` — capacités détectées
 - `POST /api/generate/plan` — scénario/storyboard/prompts
-- `POST /api/generate/video` — créer un job local ou cloud
+- `POST /api/generate/video` — créer un job T2V ou I2V
 - `GET /api/generate/jobs/{job_id}` — suivre le job
 - `GET /api/media/{filename}` — lire un MP4 généré
 
@@ -120,13 +133,10 @@ Puis ouvrir `http://localhost:3000`.
 
 ## Workflows ComfyUI
 
-Les workflows exportés peuvent être placés dans `workflows/` :
-
 - `text_to_video.json` — Wan 2.2 T2V API workflow
-- `image_to_video.json` — à ajouter
-- `low_vram.json` — à ajouter
+- `image_to_video_5b.json` — Wan 2.2 TI2V-5B I2V Low-VRAM
 
-Le workflow T2V actuel utilise les placeholders `__PROMPT__`, `__WIDTH__`, `__HEIGHT__`, `__FRAMES__` et `__RANDOM_INT__`, remplacés automatiquement par le backend.
+Les workflows utilisent notamment les placeholders `__PROMPT__`, `__IMAGE_URL__`, `__WIDTH__`, `__HEIGHT__`, `__FRAMES__` et `__RANDOM_INT__`.
 
 ## Roadmap
 
@@ -140,9 +150,11 @@ Le workflow T2V actuel utilise les placeholders `__PROMPT__`, `__WIDTH__`, `__HE
 8. stockage objet et jobs persistants
 9. sous-titres brûlés/animés façon TikTok
 10. musique de fond et ducking automatique
-11. image-to-video et first/last-frame
-12. workflow Wan2.2 TI2V-5B Low-VRAM
+11. ~~image-to-video~~
+12. ~~workflow Wan2.2 TI2V-5B Low-VRAM~~
 13. connecteurs cloud interchangeables
+14. first-frame / last-frame chaining
+15. upload direct d'images depuis le navigateur vers le stockage objet
 
 ## Licence
 
