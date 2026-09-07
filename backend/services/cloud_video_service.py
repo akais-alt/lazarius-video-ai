@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import random
 from typing import Any
 
 import httpx
@@ -45,17 +46,18 @@ class CloudVideoService:
         workflow = copy.deepcopy(self._load_workflow() or {})
         width, height = self._dimensions(aspect_ratio, quality)
         fps = 16
-        # Wan's latent video workflow expects 4n+1 frames. Keep cloud jobs bounded.
         frames = max(17, min(161, ((max(1, duration) * fps - 1) // 4) * 4 + 1))
+        seed = random.randint(0, 2**63 - 1)
 
         replacements = {
             "__PROMPT__": prompt,
             "__WIDTH__": width,
             "__HEIGHT__": height,
             "__FRAMES__": frames,
+            "__RANDOM_INT__": seed,
         }
 
-        def replace(value):
+        def replace(value: Any):
             if isinstance(value, str):
                 for key, replacement in replacements.items():
                     if value == key:
@@ -67,8 +69,7 @@ class CloudVideoService:
                 return [replace(v) for v in value]
             return value
 
-        workflow = replace(workflow)
-        return workflow
+        return replace(workflow)
 
     @staticmethod
     def _find_video_url(value: Any) -> str | None:
@@ -108,42 +109,18 @@ class CloudVideoService:
                 payload.get("aspect_ratio", "9:16"),
                 payload.get("quality", "720p"),
             )
-            request = {
-                "input": {
-                    "request_id": payload.get("request_id"),
-                    "workflow_json": workflow,
-                }
-            }
+            request = {"input": {"request_id": payload.get("request_id"), "workflow_json": workflow}}
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/generate/sync",
-                    json=request,
-                    headers=self._headers(),
-                )
+                response = await client.post(f"{self.base_url}/generate/sync", json=request, headers=self._headers())
                 response.raise_for_status()
                 data = response.json()
 
             video_url = self._find_video_url(data)
-            return {
-                "mode": "cloud",
-                "provider": self.provider,
-                "status": "completed" if video_url else "completed_no_url",
-                "video_url": video_url,
-                "response": data,
-            }
+            return {"mode": "cloud", "provider": self.provider, "status": "completed" if video_url else "completed_no_url", "video_url": video_url, "response": data}
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/jobs",
-                json=payload,
-                headers=self._headers(),
-            )
+            response = await client.post(f"{self.base_url}/jobs", json=payload, headers=self._headers())
             response.raise_for_status()
             data = response.json()
 
-        return {
-            "mode": "cloud",
-            "provider": self.provider,
-            "status": data.get("status", "queued"),
-            "response": data,
-        }
+        return {"mode": "cloud", "provider": self.provider, "status": data.get("status", "queued"), "response": data}
