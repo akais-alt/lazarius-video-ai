@@ -1,11 +1,130 @@
 {
-  "_lazarius": {
-    "engine": "wan2_2_animate_14b",
-    "source": "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_14B_animate.json",
-    "required_inputs": ["__IMAGE_URL__", "__MOTION_VIDEO_URL__", "__PROMPT__"],
-    "note": "Official ComfyUI workflow is maintained upstream. Replace this adapter with the exact API-format exported workflow from the installed ComfyUI version before production execution."
+  "3": {
+    "inputs": {"seed": "__RANDOM_INT__", "steps": 20, "cfg": 1, "sampler_name": "euler", "scheduler": "simple", "denoise": 1, "model": ["48", 0], "positive": ["51", 0], "negative": ["51", 1], "latent_image": ["51", 2]},
+    "class_type": "KSampler",
+    "_meta": {"title": "KSampler"}
   },
-  "nodes": [],
-  "links": [],
-  "version": 1
+  "6": {
+    "inputs": {"text": "__PROMPT__", "clip": ["38", 0]},
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "CLIP Text Encode (Positive Prompt)"}
+  },
+  "7": {
+    "inputs": {"text": "colorful, overexposed, static, blurry, subtitles, text, low quality, worst quality, JPEG artifacts, ugly, deformed, extra fingers, bad hands, bad face, malformed limbs, fused fingers, frozen frame, cluttered background, crowd, backward walking", "clip": ["38", 0]},
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "CLIP Text Encode (Negative Prompt)"}
+  },
+  "8": {
+    "inputs": {"samples": ["84", 0], "vae": ["39", 0]},
+    "class_type": "VAEDecode",
+    "_meta": {"title": "VAE Decode"}
+  },
+  "38": {
+    "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"},
+    "class_type": "CLIPLoader",
+    "_meta": {"title": "Load CLIP"}
+  },
+  "39": {
+    "inputs": {"vae_name": "wan_2.1_vae.safetensors"},
+    "class_type": "VAELoader",
+    "_meta": {"title": "Load VAE"}
+  },
+  "48": {
+    "inputs": {"shift": 8, "model": ["54", 0]},
+    "class_type": "ModelSamplingSD3",
+    "_meta": {"title": "ModelSamplingSD3"}
+  },
+  "51": {
+    "inputs": {
+      "width": ["83", 0],
+      "height": ["76", 0],
+      "length": ["93", 0],
+      "batch_size": 1,
+      "continue_motion_max_frames": 5,
+      "video_frame_offset": 0,
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "vae": ["39", 0],
+      "reference_image": ["64", 0],
+      "face_video": ["68", 0],
+      "pose_video": ["95", 0],
+      "background_video": ["72", 0],
+      "character_mask": ["81", 0]
+    },
+    "class_type": "WanAnimateToVideo",
+    "_meta": {"title": "WanAnimateToVideo"}
+  },
+  "54": {
+    "inputs": {"lora_name": "wan\\WanAnimate_relight_lora_fp16_resized_from_128_to_dynamic_22.safetensors", "strength_model": 1, "model": ["115", 0]},
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {"title": "Wan Animate Relight LoRA"}
+  },
+  "55": {
+    "inputs": {"detect_hand": "disable", "detect_body": "enable", "detect_face": "disable", "resolution": ["62", 0], "bbox_detector": "yolox_l.torchscript.pt", "pose_estimator": "dw-ll_ucoco_384_bs5.torchscript.pt", "scale_stick_for_xinsr_cn": "disable", "image": ["97", 0]},
+    "class_type": "DWPreprocessor",
+    "_meta": {"title": "DWPose Estimator"}
+  },
+  "59": {
+    "inputs": {"keep_model_loaded": false, "individual_objects": false, "sam2_model": ["80", 0], "image": ["97", 0], "coordinates_positive": ["77", 0]},
+    "class_type": "Sam2Segmentation",
+    "_meta": {"title": "SAM2 Character Segmentation"}
+  },
+  "62": {
+    "inputs": {"image_gen_width": ["83", 0], "image_gen_height": ["76", 0], "resize_mode": "Just Resize", "original_image": ["97", 0]},
+    "class_type": "PixelPerfectResolution",
+    "_meta": {"title": "Pixel Perfect Resolution"}
+  },
+  "64": {
+    "inputs": {"width": ["83", 0], "height": ["76", 0], "upscale_method": "lanczos", "keep_proportion": "pad_edge_pixel", "pad_color": "0, 0, 0", "crop_position": "center", "divisible_by": 16, "device": "cpu", "image": ["78", 0]},
+    "class_type": "ImageResizeKJv2",
+    "_meta": {"title": "Resize Reference Image"}
+  },
+  "66": {
+    "inputs": {"person_index": 0, "pose_kps": ["55", 1]},
+    "class_type": "FaceMaskFromPoseKeypoints",
+    "_meta": {"title": "Face Mask From Pose Keypoints"}
+  },
+  "68": {
+    "inputs": {"base_resolution": 512, "padding": 0, "min_crop_resolution": 128, "max_crop_resolution": 512, "image": ["97", 0], "mask": ["66", 0]},
+    "class_type": "ImageCropByMaskAndResize",
+    "_meta": {"title": "Face Crop"}
+  },
+  "70": {
+    "inputs": {"expand": 20, "tapered_corners": true, "mask": ["59", 0]},
+    "class_type": "GrowMask",
+    "_meta": {"title": "Grow Character Mask"}
+  },
+  "72": {
+    "inputs": {"color": "0, 0, 0", "device": "gpu", "image": ["97", 0], "mask": ["81", 0]},
+    "class_type": "DrawMaskOnImage",
+    "_meta": {"title": "Draw Character Mask"}
+  },
+  "76": {"inputs": {"value": "__HEIGHT__"}, "class_type": "INTConstant", "_meta": {"title": "Height"}},
+  "77": {
+    "inputs": {"points_store": "{\"positive\":[{\"x\":240,\"y\":300}],\"negative\":[{\"x\":0,\"y\":0}]}", "coordinates": "[{\"x\":240,\"y\":300}]", "neg_coordinates": "[{\"x\":0,\"y\":0}]", "bbox_store": "[{}]", "bboxes": "[{}]", "bbox_format": "xyxy", "width": ["83", 0], "height": ["76", 0], "normalize": false, "New canvas": null, "bg_image": ["97", 0]},
+    "class_type": "PointsEditor",
+    "_meta": {"title": "Points Editor"}
+  },
+  "78": {"inputs": {"image": "__IMAGE_URL__"}, "class_type": "LoadImage", "_meta": {"title": "Load Reference Image"}},
+  "79": {
+    "inputs": {"video": "__MOTION_VIDEO_URL__", "force_rate": 16, "force_size": "Disabled", "custom_width": ["83", 0], "custom_height": ["76", 0], "frame_load_cap": ["93", 0], "skip_first_frames": 0, "select_every_nth": 1},
+    "class_type": "VHS_LoadVideo",
+    "_meta": {"title": "Load Motion Video"}
+  },
+  "80": {
+    "inputs": {"model": "sam2_hiera_base_plus.safetensors", "segmentor": "video", "device": "cuda", "precision": "fp16"},
+    "class_type": "DownloadAndLoadSAM2Model",
+    "_meta": {"title": "Load SAM2"}
+  },
+  "81": {"inputs": {"block_size": 32, "device": "gpu", "masks": ["70", 0]}, "class_type": "BlockifyMask", "_meta": {"title": "Blockify Mask"}},
+  "83": {"inputs": {"value": "__WIDTH__"}, "class_type": "INTConstant", "_meta": {"title": "Width"}},
+  "84": {"inputs": {"trim_amount": ["51", 3], "samples": ["3", 0]}, "class_type": "TrimVideoLatent", "_meta": {"title": "Trim Video Latent"}},
+  "85": {"inputs": {"unet_name": "Wan2.2-Animate-14B-Q5_K_S.gguf"}, "class_type": "UnetLoaderGGUF", "_meta": {"title": "Load Wan2.2 Animate 14B GGUF"}},
+  "89": {"inputs": {"fps": 16, "images": ["55", 0]}, "class_type": "PreviewAnimation", "_meta": {"title": "Pose Preview"}},
+  "93": {"inputs": {"Number": "__FRAMES__"}, "class_type": "Int", "_meta": {"title": "Frames"}},
+  "95": {"inputs": {"width": ["83", 0], "height": ["76", 0], "upscale_method": "nearest-exact", "keep_proportion": "stretch", "pad_color": "0, 0, 0", "crop_position": "center", "divisible_by": 2, "device": "gpu", "image": ["55", 0]}, "class_type": "ImageResizeKJv2", "_meta": {"title": "Resize Pose Video"}},
+  "96": {"inputs": {"fps": 16, "images": ["68", 0]}, "class_type": "PreviewAnimation", "_meta": {"title": "Face Preview"}},
+  "97": {"inputs": {"width": ["83", 0], "height": ["76", 0], "upscale_method": "nearest-exact", "keep_proportion": "stretch", "pad_color": "0, 0, 0", "crop_position": "center", "divisible_by": 2, "device": "cpu", "image": ["79", 0]}, "class_type": "ImageResizeKJv2", "_meta": {"title": "Resize Motion Video"}},
+  "114": {"inputs": {"frame_rate": 16, "loop_count": 0, "filename_prefix": "LazariusAnimate", "format": "video/h264-mp4", "pix_fmt": "yuv420p", "crf": 19, "save_metadata": true, "pingpong": false, "save_output": true, "images": ["8", 0]}, "class_type": "VHS_VideoCombine", "_meta": {"title": "Save Animate MP4"}},
+  "115": {"inputs": {"sage_attention": "disabled", "allow_compile": false, "model": ["85", 0]}, "class_type": "PathchSageAttentionKJ", "_meta": {"title": "Patch Sage Attention"}}
 }
