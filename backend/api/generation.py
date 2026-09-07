@@ -32,7 +32,7 @@ async def generate_plan(data: GenerateRequest):
 
 @router.post("/video")
 async def generate_video(data: GenerateRequest, background_tasks: BackgroundTasks):
-    payload = data.model_dump()
+    payload = data.model_dump(mode="json")
     requested_mode = payload.pop("mode")
     selected_mode = runtime.detect().mode if requested_mode == "auto" else requested_mode
     if selected_mode == "local_low_vram":
