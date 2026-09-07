@@ -15,6 +15,7 @@ class CloudVideoService:
         self.api_key = os.getenv("CLOUD_VIDEO_API_KEY", "")
         self.provider = os.getenv("CLOUD_VIDEO_PROVIDER", "generic").lower()
         self.workflow_path = os.getenv("CLOUD_VIDEO_WORKFLOW", "workflows/text_to_video.json")
+        self.i2v_workflow_path = os.getenv("CLOUD_VIDEO_I2V_WORKFLOW", "workflows/image_to_video_5b.json")
         self.timeout = float(os.getenv("CLOUD_VIDEO_TIMEOUT", "900"))
 
     @property
@@ -27,10 +28,11 @@ class CloudVideoService:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _load_workflow(self) -> dict[str, Any] | None:
-        if not os.path.exists(self.workflow_path):
+    @staticmethod
+    def _load_json(path: str) -> dict[str, Any] | None:
+        if not os.path.exists(path):
             return None
-        with open(self.workflow_path, "r", encoding="utf-8") as file:
+        with open(path, "r", encoding="utf-8") as file:
             return json.load(file)
 
     @staticmethod
@@ -42,15 +44,18 @@ class CloudVideoService:
         }
         return presets.get(quality, presets["720p"]).get(aspect_ratio, (720, 1280))
 
-    def _prepare_workflow(self, prompt: str, duration: int, aspect_ratio: str, quality: str) -> dict[str, Any]:
-        workflow = copy.deepcopy(self._load_workflow() or {})
-        width, height = self._dimensions(aspect_ratio, quality)
-        fps = 16
-        frames = max(17, min(161, ((max(1, duration) * fps - 1) // 4) * 4 + 1))
+    def _prepare_workflow(self, payload: dict) -> dict[str, Any]:
+        is_i2v = bool(payload.get("image_url"))
+        workflow_path = self.i2v_workflow_path if is_i2v else self.workflow_path
+        workflow = copy.deepcopy(self._load_json(workflow_path) or {})
+        width, height = self._dimensions(payload.get("aspect_ratio", "9:16"), payload.get("quality", "720p"))
+        fps = 24 if is_i2v else 16
+        frames = max(17, min(121, ((max(1, int(payload.get("duration", 5))) * fps - 1) // 4) * 4 + 1))
         seed = random.randint(0, 2**63 - 1)
 
         replacements = {
-            "__PROMPT__": prompt,
+            "__PROMPT__": payload.get("prompt", "cinematic scene"),
+            "__IMAGE_URL__": payload.get("image_url", ""),
             "__WIDTH__": width,
             "__HEIGHT__": height,
             "__FRAMES__": frames,
@@ -103,12 +108,7 @@ class CloudVideoService:
             }
 
         if self.provider in {"vast", "vast_ai", "comfyui_sync"}:
-            workflow = self._prepare_workflow(
-                payload.get("prompt", "cinematic scene"),
-                int(payload.get("duration", 5)),
-                payload.get("aspect_ratio", "9:16"),
-                payload.get("quality", "720p"),
-            )
+            workflow = self._prepare_workflow(payload)
             request = {"input": {"request_id": payload.get("request_id"), "workflow_json": workflow}}
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(f"{self.base_url}/generate/sync", json=request, headers=self._headers())
@@ -116,10 +116,19 @@ class CloudVideoService:
                 data = response.json()
 
             video_url = self._find_video_url(data)
-            return {"mode": "cloud", "provider": self.provider, "status": "completed" if video_url else "completed_no_url", "video_url": video_url, "response": data}
+            return {
+                "mode": "cloud",
+                "provider": self.provider,
+                "type": "image_to_video" if payload.get("image_url") else "text_to_video",
+                "status": "completed" if video_url else "completed_no_url",
+                "video_url": video_url,
+                "response": data,
+            }
 
+        generic_payload = dict(payload)
+        generic_payload["type"] = "image_to_video" if payload.get("image_url") else "text_to_video"
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(f"{self.base_url}/jobs", json=payload, headers=self._headers())
+            response = await client.post(f"{self.base_url}/jobs", json=generic_payload, headers=self._headers())
             response.raise_for_status()
             data = response.json()
 
