@@ -15,68 +15,28 @@ class PipelineService:
         self.character = CharacterConsistencyService()
         self.media = MediaPipeline()
 
-    async def plan(
-        self,
-        prompt: str,
-        duration: int,
-        aspect_ratio: str,
-        language: str,
-        style: str,
-        character_description: str | None = None,
-    ):
+    async def plan(self, prompt: str, duration: int, aspect_ratio: str, language: str, style: str, character_description: str | None = None):
         plan = self.director.build_plan(prompt, duration, aspect_ratio, language)
         script = self.script.generate(prompt, duration, language)
         storyboard = self.storyboard.build(script)
         identity_lock = self.character.build_identity_lock(character_description, style)
-        visual_prompts = [
-            self.character.enrich_prompt(
-                self.prompts.build_video_prompt(scene, style),
-                identity_lock,
-            )
-            for scene in storyboard
-        ]
-
+        visual_prompts = [self.character.enrich_prompt(self.prompts.build_video_prompt(scene, style), identity_lock) for scene in storyboard]
         enriched_storyboard = []
         for index, scene in enumerate(storyboard):
             item = dict(scene)
             item["visual_prompt"] = visual_prompts[index]
             enriched_storyboard.append(item)
-
         return {
             "plan": plan,
             "script": script,
             "storyboard": enriched_storyboard,
             "visual_prompts": visual_prompts,
-            "character": {
-                "enabled": bool(identity_lock),
-                "description": character_description,
-                "identity_lock": identity_lock,
-            },
+            "character": {"enabled": bool(identity_lock), "description": character_description, "identity_lock": identity_lock},
         }
 
-    async def execute(
-        self,
-        prompt: str,
-        duration: int,
-        aspect_ratio: str,
-        language: str,
-        style: str,
-        mode: str = "cloud",
-        quality: str = "720p",
-        image_url: str | None = None,
-        character_description: str | None = None,
-        chain_scenes: bool = False,
-        progress=None,
-    ):
+    async def execute(self, prompt: str, duration: int, aspect_ratio: str, language: str, style: str, mode: str = "cloud", quality: str = "720p", image_url: str | None = None, motion_video_url: str | None = None, character_description: str | None = None, character_engine: str = "auto", chain_scenes: bool = False, progress=None):
         progress = progress or (lambda _p, _s: None)
-        plan = await self.plan(
-            prompt,
-            duration,
-            aspect_ratio,
-            language,
-            style,
-            character_description,
-        )
+        plan = await self.plan(prompt, duration, aspect_ratio, language, style, character_description)
         progress(8, "planning")
         return await self.media.run(plan, {
             "prompt": prompt,
@@ -87,6 +47,8 @@ class PipelineService:
             "mode": mode,
             "quality": quality,
             "image_url": image_url,
+            "motion_video_url": motion_video_url,
             "character_description": character_description,
+            "character_engine": character_engine,
             "chain_scenes": chain_scenes,
         }, progress)
