@@ -18,10 +18,17 @@ class PipelineService:
         script = self.script.generate(prompt, duration, language)
         storyboard = self.storyboard.build(script)
         visual_prompts = [self.prompts.build_video_prompt(scene, style) for scene in storyboard]
+
+        enriched_storyboard = []
+        for index, scene in enumerate(storyboard):
+            item = dict(scene)
+            item["visual_prompt"] = visual_prompts[index]
+            enriched_storyboard.append(item)
+
         return {
             "plan": plan,
             "script": script,
-            "storyboard": storyboard,
+            "storyboard": enriched_storyboard,
             "visual_prompts": visual_prompts,
         }
 
