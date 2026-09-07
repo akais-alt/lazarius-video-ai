@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from services.pipeline_service import PipelineService
 from services.job_service import jobs
 from services.runtime_service import RuntimeService
@@ -17,6 +17,7 @@ class GenerateRequest(BaseModel):
     style: str = Field(default="cinematic")
     mode: str = Field(default="auto", pattern="^(auto|local|cloud)$")
     quality: str = Field(default="720p", pattern="^(480p|720p|1080p)$")
+    image_url: HttpUrl | None = None
 
 
 @router.get("/runtime")
@@ -26,7 +27,7 @@ def runtime_info():
 
 @router.post("/plan")
 async def generate_plan(data: GenerateRequest):
-    return await pipeline.plan(**data.model_dump(exclude={"mode", "quality"}))
+    return await pipeline.plan(**data.model_dump(exclude={"mode", "quality", "image_url"}))
 
 
 @router.post("/video")
@@ -36,6 +37,9 @@ async def generate_video(data: GenerateRequest, background_tasks: BackgroundTask
     selected_mode = runtime.detect().mode if requested_mode == "auto" else requested_mode
     if selected_mode == "local_low_vram":
         selected_mode = "local"
+
+    if payload.get("image_url") and selected_mode == "local":
+        selected_mode = "cloud"
 
     job = jobs.create("video", {**payload, "mode": selected_mode})
     if selected_mode == "cloud":
@@ -47,6 +51,7 @@ async def generate_video(data: GenerateRequest, background_tasks: BackgroundTask
         "job_id": job["id"],
         "mode": selected_mode,
         "status": job["status"],
+        "type": "image_to_video" if payload.get("image_url") else "text_to_video",
         "message": "Pipeline vidéo lancée",
     }
 
