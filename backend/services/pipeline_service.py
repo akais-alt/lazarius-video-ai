@@ -42,6 +42,7 @@ class PipelineService:
         mode: str = "cloud",
         quality: str = "720p",
         image_url: str | None = None,
+        chain_scenes: bool = False,
         progress=None,
     ):
         progress = progress or (lambda _p, _s: None)
@@ -56,4 +57,5 @@ class PipelineService:
             "mode": mode,
             "quality": quality,
             "image_url": image_url,
+            "chain_scenes": chain_scenes,
         }, progress)
