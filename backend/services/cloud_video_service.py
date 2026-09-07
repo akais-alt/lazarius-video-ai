@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from typing import Any
@@ -6,11 +7,7 @@ import httpx
 
 
 class CloudVideoService:
-    """Cloud video adapter compatible with a ComfyUI-style HTTP endpoint.
-
-    It supports a generic /jobs API and a ComfyUI/Vast-style /generate/sync API.
-    No cloud provider is assumed or advertised as permanently free.
-    """
+    """Cloud video adapter for ComfyUI/Vast-style serverless generation."""
 
     def __init__(self):
         self.base_url = os.getenv("CLOUD_VIDEO_API_URL", "").rstrip("/")
@@ -35,6 +32,66 @@ class CloudVideoService:
         with open(self.workflow_path, "r", encoding="utf-8") as file:
             return json.load(file)
 
+    @staticmethod
+    def _dimensions(aspect_ratio: str, quality: str) -> tuple[int, int]:
+        presets = {
+            "480p": {"9:16": (480, 864), "16:9": (864, 480), "1:1": (640, 640)},
+            "720p": {"9:16": (720, 1280), "16:9": (1280, 720), "1:1": (720, 720)},
+            "1080p": {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080)},
+        }
+        return presets.get(quality, presets["720p"]).get(aspect_ratio, (720, 1280))
+
+    def _prepare_workflow(self, prompt: str, duration: int, aspect_ratio: str, quality: str) -> dict[str, Any]:
+        workflow = copy.deepcopy(self._load_workflow() or {})
+        width, height = self._dimensions(aspect_ratio, quality)
+        fps = 16
+        # Wan's latent video workflow expects 4n+1 frames. Keep cloud jobs bounded.
+        frames = max(17, min(161, ((max(1, duration) * fps - 1) // 4) * 4 + 1))
+
+        replacements = {
+            "__PROMPT__": prompt,
+            "__WIDTH__": width,
+            "__HEIGHT__": height,
+            "__FRAMES__": frames,
+        }
+
+        def replace(value):
+            if isinstance(value, str):
+                for key, replacement in replacements.items():
+                    if value == key:
+                        return replacement
+                return value
+            if isinstance(value, dict):
+                return {k: replace(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [replace(v) for v in value]
+            return value
+
+        workflow = replace(workflow)
+        return workflow
+
+    @staticmethod
+    def _find_video_url(value: Any) -> str | None:
+        if isinstance(value, str) and (value.startswith("http://") or value.startswith("https://")):
+            if any(ext in value.lower() for ext in (".mp4", ".webm", ".mov", ".mkv")) or "video" in value.lower():
+                return value
+        if isinstance(value, dict):
+            for key in ("video_url", "presigned_url", "url", "video", "output"):
+                if key in value:
+                    found = CloudVideoService._find_video_url(value[key])
+                    if found:
+                        return found
+            for child in value.values():
+                found = CloudVideoService._find_video_url(child)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = CloudVideoService._find_video_url(child)
+                if found:
+                    return found
+        return None
+
     async def submit(self, payload: dict) -> dict:
         if not self.configured:
             return {
@@ -45,15 +102,12 @@ class CloudVideoService:
             }
 
         if self.provider in {"vast", "vast_ai", "comfyui_sync"}:
-            workflow = self._load_workflow()
-            if workflow is None:
-                return {
-                    "mode": "cloud",
-                    "provider": self.provider,
-                    "status": "workflow_missing",
-                    "message": f"Workflow introuvable: {self.workflow_path}",
-                }
-
+            workflow = self._prepare_workflow(
+                payload.get("prompt", "cinematic scene"),
+                int(payload.get("duration", 5)),
+                payload.get("aspect_ratio", "9:16"),
+                payload.get("quality", "720p"),
+            )
             request = {
                 "input": {
                     "request_id": payload.get("request_id"),
@@ -69,10 +123,12 @@ class CloudVideoService:
                 response.raise_for_status()
                 data = response.json()
 
+            video_url = self._find_video_url(data)
             return {
                 "mode": "cloud",
                 "provider": self.provider,
-                "status": "completed",
+                "status": "completed" if video_url else "completed_no_url",
+                "video_url": video_url,
                 "response": data,
             }
 
