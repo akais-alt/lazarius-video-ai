@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -42,13 +41,16 @@ class MediaPipeline:
         progress(10, "script")
         clips = []
         local_clip_paths: list[Path] = []
+        image_url = payload.get("image_url")
+
         for index, scene in enumerate(scenes):
             progress(20 + int(index * 35 / max(len(scenes), 1)), "video_cloud")
             visual_prompt = scene.get("visual_prompt") or scene.get("description") or "cinematic scene"
             cloud_job = await self.cloud.submit({
-                "type": "video_clip",
+                "type": "image_to_video" if image_url else "video_clip",
                 "request_id": str(uuid.uuid4()),
                 "prompt": visual_prompt,
+                "image_url": image_url,
                 "duration": scene.get("duration", 4),
                 "aspect_ratio": payload.get("aspect_ratio", "9:16"),
                 "quality": payload.get("quality", "720p"),
@@ -62,7 +64,12 @@ class MediaPipeline:
             clips.append(record)
 
         if not local_clip_paths:
-            return {"status": "waiting_config", "stages": ["prompt", "script", "scenes", "video_cloud"], "clips": clips, "message": "Le moteur cloud n'a retourné aucune vidéo exploitable."}
+            return {
+                "status": "waiting_config",
+                "stages": ["prompt", "script", "scenes", "video_cloud"],
+                "clips": clips,
+                "message": "Le moteur cloud n'a retourné aucune vidéo exploitable.",
+            }
 
         progress(60, "voice")
         script_text = plan.get("script", "")
@@ -94,6 +101,7 @@ class MediaPipeline:
         progress(100, "done")
         return {
             "status": "completed",
+            "type": "image_to_video" if image_url else "text_to_video",
             "stages": ["prompt", "script", "scenes", "video_cloud", "voice", "subtitles", "editing", "mp4"],
             "clips": clips,
             "voice": voice,
