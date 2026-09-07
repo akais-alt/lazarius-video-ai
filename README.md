@@ -5,8 +5,8 @@ Agent open source de génération vidéo IA conçu pour fonctionner même sur un
 ## Pipeline
 
 ```text
-Prompt + image optionnelle → scénario → scènes → prompts visuels
-→ Wan 2.2 T2V / TI2V-5B I2V → clips → voix Piper → Whisper
+Prompt + personnage + image optionnelle → scénario → scènes → prompts visuels
+→ verrou d'identité → Wan 2.2 T2V / TI2V-5B I2V → clips → voix Piper → Whisper
 → sous-titres SRT → montage FFmpeg → MP4
 ```
 
@@ -19,6 +19,7 @@ PC utilisateur
   ├─ Next.js
   ├─ FastAPI
   ├─ scénario / storyboard / prompts
+  ├─ identité du personnage
   └─ détection CPU/RAM/GPU
           │
           ├── GPU local disponible
@@ -41,7 +42,7 @@ PC utilisateur
 - Transcription : faster-whisper
 - Montage : FFmpeg
 
-Wan 2.2 propose un modèle 5B capable de texte→vidéo et image→vidéo. Le workflow TI2V-5B officiel utilise `wan2.2_ti2v_5B_fp16.safetensors` et `wan2.2_vae.safetensors`. citeturn0search1turn0search2
+Wan 2.2 propose notamment des modèles pour texte→vidéo et image→vidéo. Le workflow actuel de Lazarius utilise le modèle TI2V-5B pour l'I2V. La branche Wan2.2 Animate ajoute une référence de personnage et peut transférer les expressions, gestes et mouvements depuis une vidéo de pose. citeturn0search0turn0search2
 
 ## Fonctionnalités actuelles
 
@@ -52,6 +53,9 @@ Wan 2.2 propose un modèle 5B capable de texte→vidéo et image→vidéo. Le wo
 - jobs asynchrones avec progression
 - génération scénario + storyboard
 - prompts visuels attachés directement aux scènes
+- description de personnage jusqu'à 1000 caractères
+- verrou d'identité injecté dans les prompts de toutes les scènes
+- image de référence pour renforcer l'identité visuelle
 - Wan 2.2 T2V cloud
 - Wan 2.2 TI2V-5B image→vidéo
 - image de départ via URL publique
@@ -71,15 +75,40 @@ Wan 2.2 propose un modèle 5B capable de texte→vidéo et image→vidéo. Le wo
 - aucun modèle vidéo lourd obligatoire sur le PC
 - état `waiting_config` lorsque le moteur n'est pas configuré
 
+## Cohérence du personnage
+
+L'utilisateur peut fournir une description comme :
+
+```text
+Homme ivoirien de 25 ans, cheveux courts noirs, visage ovale,
+casque de chantier jaune, gilet orange réfléchissant,
+pantalon bleu et chaussures de sécurité noires.
+```
+
+Lazarius transforme cette description en **CHARACTER IDENTITY LOCK** et l'ajoute à chaque prompt visuel. L'objectif est de réduire les changements de visage, de coiffure, d'âge, de proportions et de vêtements entre les scènes.
+
+Une image de référence peut également être fournie. Elle est envoyée au workflow I2V et peut être réutilisée comme point de départ de chaque scène. Lorsque le chaînage est activé, la dernière image du clip précédent devient le point de départ du clip suivant.
+
+Ce verrou par prompt améliore la cohérence mais ne constitue pas une garantie de copie faciale parfaite. Pour une fidélité supérieure, la prochaine étape est l'intégration du workflow **Wan2.2 Animate** avec référence personnage et vidéo de mouvement. Le nœud WanAnimateToVideo accepte notamment `reference_image`, `pose_video` et `continue_motion` pour maintenir la continuité temporelle. citeturn0search0turn0search5
+
 ## Image → vidéo et chaînage des scènes
 
 L'interface accepte une URL d'image ou un fichier image. Lorsqu'une image est fournie, Lazarius force le rendu Cloud et sélectionne automatiquement `workflows/image_to_video_5b.json`.
 
 Le mode « Chaîner les scènes » génère la première scène, extrait sa dernière image avec FFmpeg, puis utilise cette image comme image de départ de la scène suivante. Pour un moteur cloud, les images intermédiaires doivent être accessibles publiquement via `PUBLIC_BASE_URL`.
 
-Pour Vast.ai Serverless, le wrapper ComfyUI peut détecter une URL utilisée comme image d'entrée dans le workflow, télécharger cette image sur le worker, puis exécuter le workflow. citeturn2search0
+Pour Vast.ai Serverless, le wrapper ComfyUI peut détecter une URL utilisée comme image d'entrée dans le workflow, télécharger cette image sur le worker, puis exécuter le workflow.
 
-Le workflow utilise le nœud natif `Wan22ImageToVideoLatent` et les paramètres largeur, hauteur et longueur de vidéo. citeturn0search2turn1search2
+Le workflow utilise le nœud natif `Wan22ImageToVideoLatent` et les paramètres largeur, hauteur et longueur de vidéo.
+
+## Wan2.2 Animate — prochaine étape
+
+Le workflow officiel ComfyUI Wan2.2 Animate utilise une image de référence et une vidéo de mouvement. Il propose notamment deux usages :
+
+- **Move** : animer le personnage de référence avec le mouvement d'une vidéo pilote.
+- **Mix/Replace** : remplacer le personnage d'une vidéo tout en conservant ses mouvements et expressions.
+
+L'intégration dans Lazarius sera faite comme un moteur distinct afin de conserver le workflow TI2V-5B léger pour les machines/clouds disposant de moins de ressources. Le workflow officiel complet dépend de plusieurs nœuds et modèles supplémentaires, notamment pour le traitement du mouvement et de la référence. citeturn0search2turn0search6
 
 ## Important sur le « gratuit »
 
@@ -102,16 +131,16 @@ PUBLIC_BASE_URL=https://ton-backend-public.example.com
 MAX_IMAGE_UPLOAD_MB=10
 ```
 
-`PUBLIC_BASE_URL` est nécessaire pour que Vast/ComfyUI puisse récupérer les images importées par le navigateur et les dernières images produites pendant le chaînage. Pour une image déjà hébergée publiquement, `image_url` peut continuer à être utilisé directement.
+`PUBLIC_BASE_URL` est nécessaire pour que le moteur cloud puisse récupérer les images importées par le navigateur et les dernières images produites pendant le chaînage. Pour une image déjà hébergée publiquement, `image_url` peut continuer à être utilisé directement.
 
-Pour un serveur ComfyUI/Vast compatible, l'adaptateur utilise `/generate/sync`. Le serveur accepte un workflow ComfyUI complet et retourne notamment des URL présignées lorsque le stockage S3 est configuré. citeturn2search0
+Pour un serveur ComfyUI/Vast compatible, l'adaptateur utilise `/generate/sync`.
 
 ## API
 
 - `GET /api/generate/runtime` — capacités détectées
-- `POST /api/generate/plan` — scénario/storyboard/prompts
+- `POST /api/generate/plan` — scénario/storyboard/prompts + verrou d'identité
 - `POST /api/generate/media/upload` — importer une image JPG/PNG/WebP
-- `POST /api/generate/video` — créer un job T2V ou I2V, avec option `chain_scenes`
+- `POST /api/generate/video` — créer un job T2V ou I2V, avec personnage et option `chain_scenes`
 - `GET /api/generate/jobs/{job_id}` — suivre le job
 - `GET /api/media/{filename}` — lire un média généré ou une image importée
 
@@ -164,6 +193,11 @@ Les workflows utilisent notamment les placeholders `__PROMPT__`, `__IMAGE_URL__`
 13. ~~connecteurs cloud interchangeables~~
 14. ~~first-frame / last-frame chaining~~
 15. ~~import d'images depuis le navigateur~~
+16. ~~verrou d'identité du personnage~~
+17. workflow Wan2.2 Animate avec image de référence + vidéo de mouvement
+18. continuité avancée avec `continue_motion`
+19. sélection automatique du meilleur moteur selon VRAM/coût
+20. historique des projets + stockage persistant
 
 ## Licence
 
