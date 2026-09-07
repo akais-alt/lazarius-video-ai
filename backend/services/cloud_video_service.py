@@ -16,6 +16,7 @@ class CloudVideoService:
         self.provider = os.getenv("CLOUD_VIDEO_PROVIDER", "generic").lower()
         self.workflow_path = os.getenv("CLOUD_VIDEO_WORKFLOW", "workflows/text_to_video.json")
         self.i2v_workflow_path = os.getenv("CLOUD_VIDEO_I2V_WORKFLOW", "workflows/image_to_video_5b.json")
+        self.animate_workflow_path = os.getenv("CLOUD_VIDEO_ANIMATE_WORKFLOW", "workflows/wan2_2_14B_animate.json")
         self.timeout = float(os.getenv("CLOUD_VIDEO_TIMEOUT", "900"))
 
     @property
@@ -44,37 +45,45 @@ class CloudVideoService:
         }
         return presets.get(quality, presets["720p"]).get(aspect_ratio, (720, 1280))
 
+    @staticmethod
+    def _replace(value: Any, replacements: dict[str, Any]):
+        if isinstance(value, str):
+            return replacements.get(value, value)
+        if isinstance(value, dict):
+            return {k: CloudVideoService._replace(v, replacements) for k, v in value.items()}
+        if isinstance(value, list):
+            return [CloudVideoService._replace(v, replacements) for v in value]
+        return value
+
     def _prepare_workflow(self, payload: dict) -> dict[str, Any]:
+        engine = payload.get("character_engine", "auto")
+        if engine == "auto":
+            engine = "wan_animate" if payload.get("motion_video_url") else ("i2v_5b" if payload.get("image_url") else "t2v")
+        is_animate = engine == "wan_animate"
         is_i2v = bool(payload.get("image_url"))
-        workflow_path = self.i2v_workflow_path if is_i2v else self.workflow_path
+        if is_animate:
+            workflow_path = self.animate_workflow_path
+        else:
+            workflow_path = self.i2v_workflow_path if is_i2v else self.workflow_path
+
         workflow = copy.deepcopy(self._load_json(workflow_path) or {})
+        if not workflow:
+            raise RuntimeError(f"Workflow introuvable ou vide: {workflow_path}")
+
         width, height = self._dimensions(payload.get("aspect_ratio", "9:16"), payload.get("quality", "720p"))
-        fps = 24 if is_i2v else 16
+        fps = 24
         frames = max(17, min(121, ((max(1, int(payload.get("duration", 5))) * fps - 1) // 4) * 4 + 1))
         seed = random.randint(0, 2**63 - 1)
-
         replacements = {
             "__PROMPT__": payload.get("prompt", "cinematic scene"),
             "__IMAGE_URL__": payload.get("image_url", ""),
+            "__MOTION_VIDEO_URL__": payload.get("motion_video_url", ""),
             "__WIDTH__": width,
             "__HEIGHT__": height,
             "__FRAMES__": frames,
             "__RANDOM_INT__": seed,
         }
-
-        def replace(value: Any):
-            if isinstance(value, str):
-                for key, replacement in replacements.items():
-                    if value == key:
-                        return replacement
-                return value
-            if isinstance(value, dict):
-                return {k: replace(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [replace(v) for v in value]
-            return value
-
-        return replace(workflow)
+        return self._replace(workflow, replacements)
 
     @staticmethod
     def _find_video_url(value: Any) -> str | None:
@@ -100,12 +109,14 @@ class CloudVideoService:
 
     async def submit(self, payload: dict) -> dict:
         if not self.configured:
-            return {
-                "mode": "cloud",
-                "provider": self.provider,
-                "status": "not_configured",
-                "message": "Aucun moteur cloud configuré. Renseigne CLOUD_VIDEO_API_URL et, si nécessaire, CLOUD_VIDEO_API_KEY.",
-            }
+            return {"mode": "cloud", "provider": self.provider, "status": "not_configured", "message": "Aucun moteur cloud configuré. Renseigne CLOUD_VIDEO_API_URL et, si nécessaire, CLOUD_VIDEO_API_KEY."}
+
+        engine = payload.get("character_engine", "auto")
+        if engine == "auto":
+            engine = "wan_animate" if payload.get("motion_video_url") else ("i2v_5b" if payload.get("image_url") else "t2v")
+
+        if engine == "wan_animate" and (not payload.get("image_url") or not payload.get("motion_video_url")):
+            raise ValueError("Wan2.2 Animate exige image_url + motion_video_url.")
 
         if self.provider in {"vast", "vast_ai", "comfyui_sync"}:
             workflow = self._prepare_workflow(payload)
@@ -114,22 +125,13 @@ class CloudVideoService:
                 response = await client.post(f"{self.base_url}/generate/sync", json=request, headers=self._headers())
                 response.raise_for_status()
                 data = response.json()
-
             video_url = self._find_video_url(data)
-            return {
-                "mode": "cloud",
-                "provider": self.provider,
-                "type": "image_to_video" if payload.get("image_url") else "text_to_video",
-                "status": "completed" if video_url else "completed_no_url",
-                "video_url": video_url,
-                "response": data,
-            }
+            return {"mode": "cloud", "provider": self.provider, "type": engine, "status": "completed" if video_url else "completed_no_url", "video_url": video_url, "response": data}
 
         generic_payload = dict(payload)
-        generic_payload["type"] = "image_to_video" if payload.get("image_url") else "text_to_video"
+        generic_payload["type"] = engine
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(f"{self.base_url}/jobs", json=generic_payload, headers=self._headers())
             response.raise_for_status()
             data = response.json()
-
         return {"mode": "cloud", "provider": self.provider, "status": data.get("status", "queued"), "response": data}
