@@ -1,4 +1,4 @@
-import os, sqlite3
+import os, sqlite3, base64
 from datetime import datetime, timezone
 import requests
 
@@ -25,13 +25,25 @@ def search_web():
  r=requests.get('https://www.googleapis.com/customsearch/v1',params={'key':key,'cx':cx,'q':q,'num':10},timeout=30); r.raise_for_status()
  return [{'name':x.get('title','')[:180],'website':x.get('link',''),'snippet':x.get('snippet',''),'source':'Google Custom Search'} for x in r.json().get('items',[])]
 
+def enrich_email(item):
+ api=os.getenv('HUNTER_API_KEY'); url=item.get('website','')
+ if not api or not url: return item
+ domain=url.split('//')[-1].split('/')[0].replace('www.','')
+ try:
+  r=requests.get('https://api.hunter.io/v2/domain-search',params={'domain':domain,'api_key':api,'limit':5},timeout=20); r.raise_for_status()
+  data=r.json().get('data',{}).get('emails',[])
+  preferred=[e for e in data if e.get('type')=='generic'] or data
+  if preferred: item['email']=preferred[0].get('value','')
+ except requests.RequestException: pass
+ return item
+
 def score(x):
  t=(x.get('name','')+' '+x.get('snippet','')).lower(); return min(100,sum(12 for k in PROFILE['keywords'] if k in t))
 
 def save_companies(items):
  c=db(); n=0
  for x in items:
-  x['score']=score(x)
+  x=enrich_email(x); x['score']=score(x)
   if x['score']<24: continue
   try:
    c.execute('INSERT INTO companies(name,email,website,city,sector,score,source,created_at) VALUES(?,?,?,?,?,?,?,?)',(x['name'],x.get('email',''),x['website'],'Côte d’Ivoire','Génie civil / TP',x['score'],x['source'],datetime.now(timezone.utc).isoformat())); n+=1
@@ -46,10 +58,20 @@ def outlook_token():
  if not all([refresh,client,secret,tenant]): return None
  r=requests.post(f'https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token',data={'client_id':client,'client_secret':secret,'refresh_token':refresh,'grant_type':'refresh_token','scope':'https://graph.microsoft.com/.default'},timeout=30); r.raise_for_status(); return r.json()['access_token']
 
+def attachments():
+ out=[]
+ for env_name, filename in [('CV_BASE64','CV_Siaka_Kamagate.pdf'),('LETTER_BASE64','Lettre_Motivation_Siaka_Kamagate.pdf')]:
+  raw=os.getenv(env_name)
+  if raw: out.append({'@odata.type':'#microsoft.graph.fileAttachment','name':filename,'contentBytes':raw})
+ return out
+
 def send_outlook(to, subject, body):
  tok=outlook_token(); sender=os.getenv('OUTLOOK_SENDER_EMAIL')
  if not tok or not sender or not to: return False
- payload={'message':{'subject':subject,'body':{'contentType':'Text','content':body},'toRecipients':[{'emailAddress':{'address':to}}]},'saveToSentItems':True}
+ msg={'subject':subject,'body':{'contentType':'Text','content':body},'toRecipients':[{'emailAddress':{'address':to}}]}
+ ats=attachments()
+ if ats: msg['attachments']=ats
+ payload={'message':msg,'saveToSentItems':True}
  r=requests.post(f'https://graph.microsoft.com/v1.0/users/{sender}/sendMail',headers={'Authorization':f'Bearer {tok}','Content-Type':'application/json'},json=payload,timeout=30); return r.status_code in (200,202)
 
 def whatsapp(text):
@@ -63,6 +85,7 @@ def classify(text):
  if any(k in t for k in ['félicit','retenu','recrut','stage accepté','candidature retenue']): return 'REPONSE_POSITIVE'
  if any(k in t for k in ['refus','regret','malheureusement']): return 'REFUS'
  if any(k in t for k in ['stage','stagiaire']): return 'OFFRE_STAGE'
+ if any(k in t for k in ['emploi','poste','recrutement']): return 'OFFRE_EMPLOI'
  return 'AUTRE'
 
 def get_mail_summary():
@@ -82,10 +105,11 @@ def run():
   body=compose({'name':name}); ok=False
   if AUTO_SEND: ok=send_outlook(email, f'Candidature – Génie Civil / Travaux Publics – {PROFILE["name"]}', body)
   status='sent' if ok else ('prepared' if not AUTO_SEND else 'error')
-  c.execute('INSERT OR IGNORE INTO applications(company_id,sent_at,status) VALUES(?,?,?)',(cid,datetime.now(timezone.utc).isoformat(),status)); sent+=1
+  if status!='error': sent+=1
+  c.execute('INSERT OR IGNORE INTO applications(company_id,sent_at,status) VALUES(?,?,?)',(cid,datetime.now(timezone.utc).isoformat(),status))
  c.commit(); emails=get_mail_summary(); positives=sum(1 for e in emails if e['category'] in ('REPONSE_POSITIVE','ENTRETIEN'))
  report=f"🤖 LAZARIUS CAREER AGENT\n📅 {datetime.now(timezone.utc).date().isoformat()}\n\n🔎 Nouvelles entreprises: {added}\n📩 Candidatures {'envoyées' if AUTO_SEND else 'préparées'}: {sent}/{DAILY_LIMIT}\n📬 Mails récents analysés: {len(emails)}\n🟢 Réponses positives/entretiens: {positives}\n\nMode automatique: {'ACTIVÉ' if AUTO_SEND else 'DÉSACTIVÉ'}"
- for e in emails[:3]: report+=f"\n\n• {e['category']} — {e['subject']}\n  {e['sender']}"
+ for e in emails[:5]: report+=f"\n\n• {e['category']} — {e['subject']}\n  {e['sender']}"
  print(report); whatsapp(report)
 
 if __name__=='__main__': run()
