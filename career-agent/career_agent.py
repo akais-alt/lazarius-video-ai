@@ -1,9 +1,8 @@
-import os, json, sqlite3, re, sys
-from datetime import datetime, timezone, timedelta
+import os, sqlite3
+from datetime import datetime, timezone
 import requests
-from openai import OpenAI
 
-DB='career-agent/career_agent.db'
+DB='career_agent.db'
 DAILY_LIMIT=int(os.getenv('DAILY_LIMIT','20'))
 AUTO_SEND=os.getenv('AUTO_SEND','false').lower()=='true'
 PROFILE={
@@ -13,19 +12,21 @@ PROFILE={
 }
 
 def db():
- os.makedirs('career-agent',exist_ok=True); c=sqlite3.connect(DB); c.execute('CREATE TABLE IF NOT EXISTS companies(id INTEGER PRIMARY KEY,name TEXT,email TEXT,website TEXT,city TEXT,sector TEXT,score INTEGER,source TEXT,created_at TEXT,UNIQUE(name,email))'); c.execute('CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY,company_id INTEGER,sent_at TEXT,status TEXT,UNIQUE(company_id))'); c.execute('CREATE TABLE IF NOT EXISTS emails(id TEXT PRIMARY KEY,sender TEXT,subject TEXT,received_at TEXT,category TEXT,summary TEXT,action TEXT)'); c.commit(); return c
+ c=sqlite3.connect(DB)
+ c.execute('CREATE TABLE IF NOT EXISTS companies(id INTEGER PRIMARY KEY,name TEXT,email TEXT,website TEXT,city TEXT,sector TEXT,score INTEGER,source TEXT,created_at TEXT,UNIQUE(name,email))')
+ c.execute('CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY,company_id INTEGER,sent_at TEXT,status TEXT,UNIQUE(company_id))')
+ c.execute('CREATE TABLE IF NOT EXISTS emails(id TEXT PRIMARY KEY,sender TEXT,subject TEXT,received_at TEXT,category TEXT,summary TEXT,action TEXT)')
+ c.commit(); return c
 
 def search_web():
  key=os.getenv('SEARCH_API_KEY'); cx=os.getenv('SEARCH_ENGINE_ID')
  if not key or not cx: return []
  q='entreprise BTP travaux publics génie civil Côte d Ivoire recrutement stage'
  r=requests.get('https://www.googleapis.com/customsearch/v1',params={'key':key,'cx':cx,'q':q,'num':10},timeout=30); r.raise_for_status()
- out=[]
- for x in r.json().get('items',[]): out.append({'name':x.get('title','')[:180],'website':x.get('link',''),'snippet':x.get('snippet',''),'source':'Google Custom Search'})
- return out
+ return [{'name':x.get('title','')[:180],'website':x.get('link',''),'snippet':x.get('snippet',''),'source':'Google Custom Search'} for x in r.json().get('items',[])]
 
 def score(x):
- t=(x.get('name','')+' '+x.get('snippet','')).lower(); s=sum(12 for k in PROFILE['keywords'] if k in t); return min(100,s)
+ t=(x.get('name','')+' '+x.get('snippet','')).lower(); return min(100,sum(12 for k in PROFILE['keywords'] if k in t))
 
 def save_companies(items):
  c=db(); n=0
@@ -38,7 +39,7 @@ def save_companies(items):
  c.commit(); return n
 
 def compose(company):
- return f"Objet: Candidature – {PROFILE['target']} en Génie Civil / Travaux Publics\n\nMadame, Monsieur,\n\nJe suis {PROFILE['education']}. Je souhaite rejoindre votre structure dans le cadre d’un {PROFILE['target']}. Votre activité dans le domaine du génie civil et des travaux publics correspond directement à mon projet professionnel.\n\nJe maîtrise notamment {PROFILE['skills']}. Vous trouverez mon dossier de candidature en pièces jointes.\n\nCordialement,\n{PROFILE['name']}"
+ return f"Madame, Monsieur,\n\nJe suis {PROFILE['education']}. Je souhaite intégrer votre structure dans le cadre d’un {PROFILE['target']}. Votre activité dans le domaine du génie civil et des travaux publics correspond à mon projet professionnel.\n\nJe maîtrise notamment {PROFILE['skills']}. Vous trouverez mon dossier de candidature en pièces jointes.\n\nCordialement,\n{PROFILE['name']}"
 
 def outlook_token():
  refresh=os.getenv('OUTLOOK_REFRESH_TOKEN'); client=os.getenv('OUTLOOK_CLIENT_ID'); secret=os.getenv('OUTLOOK_CLIENT_SECRET'); tenant=os.getenv('OUTLOOK_TENANT_ID')
@@ -68,24 +69,23 @@ def get_mail_summary():
  tok=outlook_token(); sender=os.getenv('OUTLOOK_SENDER_EMAIL')
  if not tok or not sender: return []
  r=requests.get(f'https://graph.microsoft.com/v1.0/users/{sender}/mailFolders/inbox/messages?$top=20&$orderby=receivedDateTime%20desc',headers={'Authorization':f'Bearer {tok}'},timeout=30); r.raise_for_status(); arr=[]
- for m in r.json().get('value',[]): arr.append({'sender':m.get('from',{}).get('emailAddress',{}).get('address',''),'subject':m.get('subject',''),'received_at':m.get('receivedDateTime',''),'category':classify((m.get('subject','')+' '+m.get('bodyPreview',''))),'summary':m.get('bodyPreview','')[:350]})
+ for m in r.json().get('value',[]):
+  arr.append({'sender':m.get('from',{}).get('emailAddress',{}).get('address',''),'subject':m.get('subject',''),'received_at':m.get('receivedDateTime',''),'category':classify((m.get('subject','')+' '+m.get('bodyPreview',''))),'summary':m.get('bodyPreview','')[:350]})
  return arr
 
 def run():
  c=db(); found=search_web(); added=save_companies(found)
- rows=c.execute('SELECT id,name,email,score FROM companies ORDER BY score DESC, id DESC').fetchall(); today=datetime.now(timezone.utc).date().isoformat(); sent=0
+ rows=c.execute('SELECT id,name,email,score FROM companies ORDER BY score DESC, id DESC').fetchall(); sent=0
  for cid,name,email,s in rows:
   if sent>=DAILY_LIMIT: break
-  already=c.execute('SELECT 1 FROM applications WHERE company_id=?',(cid,)).fetchone()
-  if already or not email: continue
+  if c.execute('SELECT 1 FROM applications WHERE company_id=?',(cid,)).fetchone() or not email: continue
   body=compose({'name':name}); ok=False
   if AUTO_SEND: ok=send_outlook(email, f'Candidature – Génie Civil / Travaux Publics – {PROFILE["name"]}', body)
   status='sent' if ok else ('prepared' if not AUTO_SEND else 'error')
   c.execute('INSERT OR IGNORE INTO applications(company_id,sent_at,status) VALUES(?,?,?)',(cid,datetime.now(timezone.utc).isoformat(),status)); sent+=1
  c.commit(); emails=get_mail_summary(); positives=sum(1 for e in emails if e['category'] in ('REPONSE_POSITIVE','ENTRETIEN'))
- report=f"🤖 LAZARIUS CAREER AGENT\n📅 {today}\n\n🔎 Nouvelles entreprises: {added}\n📩 Candidatures {'envoyées' if AUTO_SEND else 'préparées'}: {sent}/{DAILY_LIMIT}\n📬 Mails récents analysés: {len(emails)}\n🟢 Réponses positives/entretiens: {positives}\n\nMode automatique: {'ACTIVÉ' if AUTO_SEND else 'DÉSACTIVÉ'}"
+ report=f"🤖 LAZARIUS CAREER AGENT\n📅 {datetime.now(timezone.utc).date().isoformat()}\n\n🔎 Nouvelles entreprises: {added}\n📩 Candidatures {'envoyées' if AUTO_SEND else 'préparées'}: {sent}/{DAILY_LIMIT}\n📬 Mails récents analysés: {len(emails)}\n🟢 Réponses positives/entretiens: {positives}\n\nMode automatique: {'ACTIVÉ' if AUTO_SEND else 'DÉSACTIVÉ'}"
  for e in emails[:3]: report+=f"\n\n• {e['category']} — {e['subject']}\n  {e['sender']}"
- print(report)
- whatsapp(report)
+ print(report); whatsapp(report)
 
 if __name__=='__main__': run()
